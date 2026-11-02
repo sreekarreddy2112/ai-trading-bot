@@ -1,0 +1,311 @@
+"use client";
+
+import React, { useEffect, useState } from "react";
+import Link from "next/link";
+import { api } from "@/lib/api";
+import { MarketOverviewResponse, StockMover, Nifty50Stock } from "@/lib/types";
+import MarketCard from "@/components/MarketCard";
+import StockSearch from "@/components/StockSearch";
+import DisclaimerBanner from "@/components/DisclaimerBanner";
+import Nifty50TradeTable from "@/components/Nifty50TradeTable";
+import PriceAlertModal from "@/components/PriceAlertModal";
+import { 
+  TrendingUp, 
+  TrendingDown, 
+  Clock, 
+  Sparkles, 
+  Layers, 
+  PieChart, 
+  RefreshCw,
+  ArrowUpRight,
+  ArrowDownRight,
+  AlertCircle,
+  Bell,
+  Activity,
+  ShieldCheck
+} from "lucide-react";
+import { formatINR, formatPercent } from "@/lib/utils";
+
+export default function MarketOverviewPage() {
+  const [data, setData] = useState<MarketOverviewResponse | null>(null);
+  const [niftyStocks, setNiftyStocks] = useState<Nifty50Stock[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  // Price Alert Modal State
+  const [alertModalOpen, setAlertModalOpen] = useState(false);
+  const [alertModalSymbol, setAlertModalSymbol] = useState("RELIANCE");
+  const [alertModalPrice, setAlertModalPrice] = useState(2980.50);
+
+  const fetchOverview = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const [overview, n50] = await Promise.all([
+        api.getMarketOverview(),
+        api.getNifty50Constituents(),
+      ]);
+      setData(overview);
+      setNiftyStocks(n50);
+    } catch (err: any) {
+      setError(err.message || "Failed to load market overview");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchOverview();
+  }, []);
+
+  const handleOpenAlert = (sym: string, price: number) => {
+    setAlertModalSymbol(sym);
+    setAlertModalPrice(price);
+    setAlertModalOpen(true);
+  };
+
+  const isMarketOpen = data?.market_status === "OPEN";
+
+  return (
+    <div className="space-y-8">
+      {/* SEBI Compliance Banner */}
+      <DisclaimerBanner />
+
+      {/* Hero Section */}
+      <div className="relative overflow-hidden rounded-2xl bg-gradient-to-b from-surface-card to-surface border border-surface-border p-6 sm:p-10 shadow-2xl text-center">
+        <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-indigo-50 border border-indigo-200 text-indigo-700 text-xs font-semibold mb-4">
+          <Sparkles className="w-3.5 h-3.5 text-indigo-600" />
+          Autonomous Technical, Fundamental & AI Synthesis for Indian Equities
+        </div>
+        <h1 className="text-3xl sm:text-5xl font-extrabold text-slate-900 tracking-tight mb-4">
+          MarketMind{" "}
+          <span className="inline-block text-indigo-600 font-black bg-indigo-50 border border-indigo-200 px-3 py-0.5 rounded-2xl align-middle text-2xl sm:text-4xl shadow-sm">
+            India
+          </span>
+        </h1>
+        <p className="max-w-2xl mx-auto text-sm sm:text-base text-slate-600 mb-8 leading-relaxed">
+          Live NSE market dashboard, Nifty 50 trade telemetry, company fundamental health metrics, and automated limit price alerts.
+        </p>
+
+        {/* Global Search Bar */}
+        <StockSearch />
+      </div>
+
+      {/* Live Market Status & Telemetry Bar */}
+      <div className="bg-surface-card border border-surface-border rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-md">
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="flex items-center gap-2">
+            <span
+              className={`w-2.5 h-2.5 rounded-full ${
+                isMarketOpen ? "bg-emerald-400 animate-ping" : "bg-gray-500"
+              }`}
+            />
+            <span
+              className={`text-xs font-bold px-2 py-0.5 rounded uppercase tracking-wider ${
+                isMarketOpen
+                  ? "bg-emerald-950/60 text-emerald-400 border border-emerald-500/30"
+                  : "bg-surface border border-surface-border text-gray-400"
+              }`}
+            >
+              NSE {data?.market_status || "CLOSED"}
+            </span>
+          </div>
+
+          <span className="text-xs text-gray-300 font-medium">
+            {data?.market_status_message || "NSE Trading: Mon-Fri 09:15 - 15:30 IST"}
+          </span>
+        </div>
+
+        <div className="flex items-center gap-3 text-xs text-gray-400">
+          <div className="flex items-center gap-1.5 font-mono">
+            <Clock className="w-3.5 h-3.5 text-primary-400" />
+            <span>{data ? data.last_updated : "Connecting..."}</span>
+          </div>
+
+          <button
+            onClick={fetchOverview}
+            disabled={loading}
+            className="flex items-center gap-1.5 text-xs text-primary-400 hover:text-primary-300 disabled:opacity-50 transition-colors"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} />
+            <span>Refresh</span>
+          </button>
+        </div>
+      </div>
+
+      {/* Backend connection notice if server is offline */}
+      {error && (
+        <div className="p-4 bg-amber-950/40 border border-amber-500/40 rounded-xl text-amber-200 text-xs sm:text-sm flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex items-center gap-2.5">
+            <AlertCircle className="w-5 h-5 text-amber-400 shrink-0" />
+            <span>
+              Backend server is offline or unreachable at <code className="bg-surface px-1.5 py-0.5 rounded text-amber-300">http://localhost:8000</code>. Please start the backend with <code className="bg-surface px-1.5 py-0.5 rounded text-amber-300 font-bold">python run_backend.py</code>.
+            </span>
+          </div>
+          <button
+            onClick={fetchOverview}
+            className="px-3 py-1.5 bg-amber-500/20 hover:bg-amber-500/30 rounded-lg text-xs font-semibold text-amber-300 shrink-0 self-start sm:self-auto transition-colors"
+          >
+            Retry Connection
+          </button>
+        </div>
+      )}
+
+      {/* Benchmark Indices Grid */}
+      {loading && !data && (
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          {[1, 2, 3].map((i) => (
+            <div key={i} className="h-32 bg-surface-card animate-pulse rounded-xl border border-surface-border" />
+          ))}
+        </div>
+      )}
+
+      {data && (
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          {data.indices.map((idx) => (
+            <MarketCard key={idx.symbol} index={idx} />
+          ))}
+        </div>
+      )}
+
+      {/* Market Movers: Top Gainers & Losers */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Top Gainers */}
+        <div className="bg-surface-card border border-surface-border rounded-xl p-5 shadow-xl">
+          <div className="flex items-center justify-between mb-4 pb-3 border-b border-surface-border/60">
+            <div className="flex items-center gap-2">
+              <div className="w-7 h-7 rounded-lg bg-bullish/10 border border-bullish/20 flex items-center justify-center text-bullish">
+                <TrendingUp className="w-4 h-4" />
+              </div>
+              <h3 className="font-bold text-gray-100 text-sm sm:text-base">Nifty 50 Top Gainers</h3>
+            </div>
+            <span className="text-xs text-gray-500 font-medium">Top 5 Leaders</span>
+          </div>
+
+          <div className="divide-y divide-surface-border/50">
+            {data?.top_gainers.map((stock: StockMover) => (
+              <div
+                key={stock.symbol}
+                className="py-3 flex items-center justify-between hover:bg-surface/50 px-2 rounded-lg transition-colors group"
+              >
+                <Link href={`/analyze/${stock.symbol}`} className="block">
+                  <div className="font-bold text-gray-200 text-sm group-hover:text-primary-400 flex items-center gap-1">
+                    {stock.symbol}
+                    <ArrowUpRight className="w-3.5 h-3.5 opacity-0 group-hover:opacity-100 transition-opacity text-primary-400" />
+                  </div>
+                  <div className="text-xs text-gray-400 truncate max-w-[180px] sm:max-w-xs">{stock.name}</div>
+                </Link>
+
+                <div className="flex items-center gap-3">
+                  <div className="text-right">
+                    <div className="text-sm font-semibold text-gray-100">{formatINR(stock.price)}</div>
+                    <div className="text-xs font-bold text-bullish">
+                      {formatPercent(stock.change_percent, true)}
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => handleOpenAlert(stock.symbol, stock.price)}
+                    className="p-1.5 rounded-lg bg-surface border border-surface-border text-gray-400 hover:text-amber-400"
+                    title="Set Limit Price Alert"
+                  >
+                    <Bell className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Top Losers */}
+        <div className="bg-surface-card border border-surface-border rounded-xl p-5 shadow-xl">
+          <div className="flex items-center justify-between mb-4 pb-3 border-b border-surface-border/60">
+            <div className="flex items-center gap-2">
+              <div className="w-7 h-7 rounded-lg bg-bearish/10 border border-bearish/20 flex items-center justify-center text-bearish">
+                <TrendingDown className="w-4 h-4" />
+              </div>
+              <h3 className="font-bold text-gray-100 text-sm sm:text-base">Nifty 50 Top Losers</h3>
+            </div>
+            <span className="text-xs text-gray-500 font-medium">Top 5 Laggards</span>
+          </div>
+
+          <div className="divide-y divide-surface-border/50">
+            {data?.top_losers.map((stock: StockMover) => (
+              <div
+                key={stock.symbol}
+                className="py-3 flex items-center justify-between hover:bg-surface/50 px-2 rounded-lg transition-colors group"
+              >
+                <Link href={`/analyze/${stock.symbol}`} className="block">
+                  <div className="font-bold text-gray-200 text-sm group-hover:text-primary-400 flex items-center gap-1">
+                    {stock.symbol}
+                    <ArrowDownRight className="w-3.5 h-3.5 opacity-0 group-hover:opacity-100 transition-opacity text-bearish" />
+                  </div>
+                  <div className="text-xs text-gray-400 truncate max-w-[180px] sm:max-w-xs">{stock.name}</div>
+                </Link>
+
+                <div className="flex items-center gap-3">
+                  <div className="text-right">
+                    <div className="text-sm font-semibold text-gray-100">{formatINR(stock.price)}</div>
+                    <div className="text-xs font-bold text-bearish">
+                      {formatPercent(stock.change_percent)}
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => handleOpenAlert(stock.symbol, stock.price)}
+                    className="p-1.5 rounded-lg bg-surface border border-surface-border text-gray-400 hover:text-amber-400"
+                    title="Set Limit Price Alert"
+                  >
+                    <Bell className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* Feature 1 Core: Nifty 50 Full Interactive Trade Table */}
+      <Nifty50TradeTable
+        stocks={niftyStocks}
+        onOpenAlertModal={handleOpenAlert}
+      />
+
+      {/* Sector Performance Grid */}
+      {data && data.sectors && (
+        <div className="bg-surface-card border border-surface-border rounded-xl p-5 shadow-xl">
+          <div className="flex items-center justify-between mb-4 pb-3 border-b border-surface-border/60">
+            <div className="flex items-center gap-2">
+              <PieChart className="w-5 h-5 text-primary-400" />
+              <h3 className="font-bold text-gray-100 text-base">Key Sectoral Indices</h3>
+            </div>
+            <span className="text-xs text-gray-500">Intraday %</span>
+          </div>
+
+          <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3">
+            {data.sectors.map((sec) => {
+              const isPos = sec.change_percent >= 0;
+              return (
+                <div
+                  key={sec.sector}
+                  className="bg-surface border border-surface-border rounded-lg p-3 text-center"
+                >
+                  <div className="text-xs font-medium text-gray-300 truncate">{sec.sector}</div>
+                  <div className={`text-sm font-bold mt-1 ${isPos ? "text-bullish" : "text-bearish"}`}>
+                    {formatPercent(sec.change_percent, isPos)}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Global Alert Modal */}
+      <PriceAlertModal
+        isOpen={alertModalOpen}
+        onClose={() => setAlertModalOpen(false)}
+        symbol={alertModalSymbol}
+        currentPrice={alertModalPrice}
+      />
+    </div>
+  );
+}
