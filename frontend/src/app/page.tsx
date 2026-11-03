@@ -133,18 +133,22 @@ export default function MarketOverviewPage() {
         </div>
       </div>
 
-      {/* Backend connection notice if server is offline */}
+      {/* Backend connection notice if server is offline or waking up */}
       {error && (
-        <div className="p-4 bg-amber-950/40 border border-amber-500/40 rounded-xl text-amber-200 text-xs sm:text-sm flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div className="p-4 bg-amber-50 border border-amber-200 rounded-xl text-amber-900 text-xs sm:text-sm flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-sm">
           <div className="flex items-center gap-2.5">
-            <AlertCircle className="w-5 h-5 text-amber-400 shrink-0" />
+            <AlertCircle className="w-5 h-5 text-amber-600 shrink-0" />
             <span>
-              Backend server is offline or unreachable at <code className="bg-surface px-1.5 py-0.5 rounded text-amber-300">http://localhost:8000</code>. Please start the backend with <code className="bg-surface px-1.5 py-0.5 rounded text-amber-300 font-bold">python run_backend.py</code>.
+              Backend is unreachable at{" "}
+              <code className="bg-amber-100/80 px-1.5 py-0.5 rounded text-amber-900 font-mono text-xs border border-amber-200">
+                {process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"}
+              </code>
+              . If hosted on Render, free instances take ~30–50s to wake up on the first request.
             </span>
           </div>
           <button
             onClick={fetchOverview}
-            className="px-3 py-1.5 bg-amber-500/20 hover:bg-amber-500/30 rounded-lg text-xs font-semibold text-amber-300 shrink-0 self-start sm:self-auto transition-colors"
+            className="px-3.5 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-xs font-semibold shrink-0 self-start sm:self-auto transition-colors shadow-sm"
           >
             Retry Connection
           </button>
