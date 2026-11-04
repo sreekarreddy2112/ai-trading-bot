@@ -318,3 +318,33 @@ class IPOAIVerdict(BaseModel):
     generated_at: str
     disclaimer: str
 
+
+# ----------------- User Authentication & Email OTP -----------------
+
+class SendOTPRequest(BaseModel):
+    email: str
+
+class SendOTPResponse(BaseModel):
+    status: str
+    message: str
+    email: str
+    expires_in_seconds: int = 600
+    demo_otp: Optional[str] = None
+
+class VerifyOTPRequest(BaseModel):
+    email: str
+    otp: str
+
+class AuthUserResponse(BaseModel):
+    id: str
+    email: str
+    name: str
+    verified: bool
+
+class VerifyOTPResponse(BaseModel):
+    status: str
+    message: str
+    token: str
+    user: AuthUserResponse
+
+

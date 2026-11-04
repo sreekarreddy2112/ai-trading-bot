@@ -10,7 +10,7 @@ import logging
 from fastapi import FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
 from config import settings
-from routers import market, stocks, news, backtest, watchlist, ipo, alerts
+from routers import market, stocks, news, backtest, watchlist, ipo, alerts, auth
 
 # Configure logging
 logging.basicConfig(
@@ -49,6 +49,7 @@ app.include_router(backtest.router)
 app.include_router(watchlist.router)
 app.include_router(ipo.router)
 app.include_router(alerts.router)
+app.include_router(auth.router)
 
 
 @app.get("/favicon.ico", include_in_schema=False)

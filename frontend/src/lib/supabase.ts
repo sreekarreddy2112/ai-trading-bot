@@ -1,4 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
+import { api } from "./api";
 
 const rawUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
 const rawKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
@@ -28,6 +29,7 @@ export interface AuthUser {
 }
 
 const LOCAL_STORAGE_KEY = "marketmind_user_session";
+const LOCAL_TOKEN_KEY = "marketmind_auth_token";
 const listeners = new Set<(user: AuthUser | null) => void>();
 
 function notifyListeners(user: AuthUser | null) {
@@ -65,7 +67,7 @@ export async function getCurrentUser(): Promise<AuthUser | null> {
         return {
           id: session.user.id,
           email: session.user.email || "user@marketmind.in",
-          name: session.user.user_metadata?.full_name || session.user.email?.split("@")[0],
+          name: session.user.user_metadata?.full_name || session.user.email?.split("@")[0].toUpperCase(),
           provider: "supabase",
         };
       }
@@ -89,6 +91,81 @@ export async function getCurrentUser(): Promise<AuthUser | null> {
   return null;
 }
 
+export async function requestEmailOTP(email: string): Promise<{ demo_otp?: string; message: string }> {
+  const cleanEmail = email.trim().toLowerCase();
+
+  // Try Supabase OTP if configured
+  if (isSupabaseConfigured) {
+    try {
+      const { error } = await supabase.auth.signInWithOtp({
+        email: cleanEmail,
+        options: {
+          shouldCreateUser: true,
+        },
+      });
+      if (!error) {
+        return { message: `Verification code sent to ${cleanEmail}` };
+      }
+    } catch (err: any) {
+      console.warn("Supabase OTP fallback to backend:", err.message);
+    }
+  }
+
+  // Call backend OTP endpoint
+  const res = await api.sendOTP(cleanEmail);
+  return {
+    demo_otp: res.demo_otp,
+    message: res.message,
+  };
+}
+
+export async function verifyEmailOTP(email: string, otp: string): Promise<AuthUser> {
+  const cleanEmail = email.trim().toLowerCase();
+  const cleanOtp = otp.trim();
+
+  // Try Supabase verifyOtp if configured
+  if (isSupabaseConfigured) {
+    try {
+      const { data, error } = await supabase.auth.verifyOtp({
+        email: cleanEmail,
+        token: cleanOtp,
+        type: "email",
+      });
+      if (!error && data.user) {
+        const u: AuthUser = {
+          id: data.user.id,
+          email: data.user.email || cleanEmail,
+          name: data.user.user_metadata?.full_name || cleanEmail.split("@")[0].toUpperCase(),
+          provider: "supabase",
+        };
+        notifyListeners(u);
+        return u;
+      }
+    } catch (err: any) {
+      console.warn("Supabase verifyOtp fallback to backend:", err.message);
+    }
+  }
+
+  // Call backend verify-otp endpoint
+  const res = await api.verifyOTP(cleanEmail, cleanOtp);
+  const user: AuthUser = {
+    id: res.user.id,
+    email: res.user.email,
+    name: res.user.name,
+    provider: "local",
+  };
+
+  if (typeof window !== "undefined") {
+    localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(user));
+    if (res.token) {
+      localStorage.setItem(LOCAL_TOKEN_KEY, res.token);
+    }
+  }
+
+  notifyListeners(user);
+  return user;
+}
+
 export async function signIn(email: string, password?: string): Promise<AuthUser> {
   const cleanEmail = email.trim().toLowerCase();
 
@@ -102,7 +179,7 @@ export async function signIn(email: string, password?: string): Promise<AuthUser
       const u: AuthUser = {
         id: data.user.id,
         email: data.user.email || cleanEmail,
-        name: data.user.user_metadata?.full_name || cleanEmail.split("@")[0],
+        name: data.user.user_metadata?.full_name || cleanEmail.split("@")[0].toUpperCase(),
         provider: "supabase",
       };
       notifyListeners(u);
@@ -140,7 +217,7 @@ export async function signUp(email: string, password?: string): Promise<AuthUser
       const u: AuthUser = {
         id: data.user.id,
         email: data.user.email || cleanEmail,
-        name: data.user.user_metadata?.full_name || cleanEmail.split("@")[0],
+        name: data.user.user_metadata?.full_name || cleanEmail.split("@")[0].toUpperCase(),
         provider: "supabase",
       };
       notifyListeners(u);
@@ -151,7 +228,7 @@ export async function signUp(email: string, password?: string): Promise<AuthUser
   return signIn(cleanEmail, password);
 }
 
-export async function signInDemo(demoEmail: string = "investor@marketmind.in"): Promise<AuthUser> {
+export async function signInDemo(demoEmail: string = "demo.investor@marketmind.in"): Promise<AuthUser> {
   return signIn(demoEmail);
 }
 
@@ -166,6 +243,7 @@ export async function signOut(): Promise<void> {
 
   if (typeof window !== "undefined") {
     localStorage.removeItem(LOCAL_STORAGE_KEY);
+    localStorage.removeItem(LOCAL_TOKEN_KEY);
   }
 
   notifyListeners(null);
@@ -183,11 +261,10 @@ export function onAuthChange(callback: (user: AuthUser | null) => void): () => v
           callback({
             id: session.user.id,
             email: session.user.email || "user@marketmind.in",
-            name: session.user.user_metadata?.full_name || session.user.email?.split("@")[0],
+            name: session.user.user_metadata?.full_name || session.user.email?.split("@")[0].toUpperCase(),
             provider: "supabase",
           });
         } else {
-          // If Supabase signed out, check if local user exists
           const localUser = await getCurrentUser();
           callback(localUser);
         }
@@ -217,6 +294,13 @@ export async function getAuthHeader(): Promise<Record<string, string>> {
   }
 
   // Fallback to local session token
+  if (typeof window !== "undefined") {
+    const savedToken = localStorage.getItem(LOCAL_TOKEN_KEY);
+    if (savedToken) {
+      return { Authorization: `Bearer ${savedToken}` };
+    }
+  }
+
   const user = await getCurrentUser();
   if (user) {
     const token = createLocalToken(user.id, user.email);

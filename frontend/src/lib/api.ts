@@ -121,4 +121,40 @@ export const api = {
     fetchJson<IPOAIVerdict>(`/api/ipo/${encodeURIComponent(id)}/ai-verdict`, {
       method: "POST",
     }),
+
+  // Email OTP Authentication
+  sendOTP: (email: string) =>
+    fetchJson<{
+      status: string;
+      message: string;
+      email: string;
+      expires_in_seconds: number;
+      demo_otp?: string;
+    }>("/api/auth/send-otp", {
+      method: "POST",
+      body: JSON.stringify({ email }),
+    }),
+
+  verifyOTP: (email: string, otp: string) =>
+    fetchJson<{
+      status: string;
+      message: string;
+      token: string;
+      user: { id: string; email: string; name: string; verified: boolean };
+    }>("/api/auth/verify-otp", {
+      method: "POST",
+      body: JSON.stringify({ email, otp }),
+    }),
+
+  resendOTP: (email: string) =>
+    fetchJson<{
+      status: string;
+      message: string;
+      email: string;
+      expires_in_seconds: number;
+      demo_otp?: string;
+    }>("/api/auth/resend-otp", {
+      method: "POST",
+      body: JSON.stringify({ email }),
+    }),
 };

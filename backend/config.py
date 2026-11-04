@@ -23,6 +23,14 @@ class Settings:
     # News API Key (optional)
     NEWS_API_KEY: str = os.getenv("NEWS_API_KEY", "").strip()
     
+    # SMTP Email Configuration for OTP Verification (Optional)
+    SMTP_HOST: str = os.getenv("SMTP_HOST", "").strip()
+    SMTP_PORT: int = int(os.getenv("SMTP_PORT", "587"))
+    SMTP_USER: str = os.getenv("SMTP_USER", "").strip()
+    SMTP_PASSWORD: str = os.getenv("SMTP_PASSWORD", "").strip()
+    SMTP_FROM_EMAIL: str = os.getenv("SMTP_FROM_EMAIL", os.getenv("SMTP_USER", "no-reply@marketmind.in")).strip()
+    ENABLE_DEMO_OTP: bool = os.getenv("ENABLE_DEMO_OTP", "true").lower() in ("true", "1", "yes")
+    
     # External Indian Market API Providers (Optional - yfinance NSE institutional feed is default)
     INDIAN_API_KEY: str = os.getenv("INDIAN_API_KEY", "").strip()
     TRUEDATA_API_KEY: str = os.getenv("TRUEDATA_API_KEY", "").strip()
