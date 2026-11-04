@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { supabase } from "@/lib/supabase";
+import { getCurrentUser, signOut as authSignOut, onAuthChange, AuthUser } from "@/lib/supabase";
 import AuthModal from "@/components/AuthModal";
 import { 
   TrendingUp, 
@@ -26,24 +26,19 @@ export default function Navbar() {
   const [navSearch, setNavSearch] = useState("");
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [authModalOpen, setAuthModalOpen] = useState(false);
-  const [user, setUser] = useState<any>(null);
+  const [user, setUser] = useState<AuthUser | null>(null);
 
   useEffect(() => {
-    // Check initial session
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setUser(session?.user ?? null);
-    });
+    // Check initial user
+    getCurrentUser().then(setUser);
 
-    // Listen to auth changes
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setUser(session?.user ?? null);
-    });
-
-    return () => subscription.unsubscribe();
+    // Listen to real-time auth changes
+    const unsubscribe = onAuthChange(setUser);
+    return () => unsubscribe();
   }, []);
 
   const handleSignOut = async () => {
-    await supabase.auth.signOut();
+    await authSignOut();
     setUser(null);
   };
 
@@ -132,16 +127,20 @@ export default function Navbar() {
                 />
               </form>
 
-              {/* Supabase User / Sign In Button */}
+              {/* User Account / Sign In Button */}
               {user ? (
-                <div className="flex items-center gap-2 pl-2 border-l border-surface-border">
-                  <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-surface-card border border-surface-border text-xs text-gray-300">
-                    <User className="w-3.5 h-3.5 text-primary-400" />
-                    <span className="max-w-[100px] truncate">{user.email?.split("@")[0]}</span>
+                <div className="flex items-center gap-2 pl-2 border-l border-slate-200">
+                  <div className="flex items-center gap-2 px-2.5 py-1 rounded-xl bg-slate-100 border border-slate-200 text-xs text-slate-800 shadow-sm">
+                    <div className="w-5 h-5 rounded-full bg-indigo-600 text-white flex items-center justify-center text-[10px] font-bold">
+                      {(user.name || user.email)[0].toUpperCase()}
+                    </div>
+                    <span className="max-w-[100px] truncate font-medium">
+                      {user.name || user.email?.split("@")[0]}
+                    </span>
                   </div>
                   <button
                     onClick={handleSignOut}
-                    className="p-1.5 text-gray-400 hover:text-rose-400 rounded-lg hover:bg-surface transition-colors"
+                    className="p-1.5 text-slate-400 hover:text-rose-600 rounded-lg hover:bg-slate-100 transition-colors"
                     title="Sign Out"
                   >
                     <LogOut className="w-4 h-4" />
@@ -150,7 +149,7 @@ export default function Navbar() {
               ) : (
                 <button
                   onClick={() => setAuthModalOpen(true)}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary-600/20 hover:bg-primary-600/30 border border-primary-500/40 text-primary-300 text-xs font-semibold transition-colors"
+                  className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold shadow-sm transition-all active:scale-95"
                 >
                   <User className="w-3.5 h-3.5" />
                   <span>Sign In</span>
@@ -160,17 +159,24 @@ export default function Navbar() {
 
             {/* Mobile menu button */}
             <div className="flex md:hidden items-center gap-2">
-              {!user && (
+              {!user ? (
                 <button
                   onClick={() => setAuthModalOpen(true)}
-                  className="px-2.5 py-1 text-xs font-semibold rounded-lg bg-primary-600/20 border border-primary-500/30 text-primary-300"
+                  className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-indigo-600 text-white shadow-sm"
                 >
                   Sign In
                 </button>
+              ) : (
+                <div className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-slate-100 border border-slate-200 text-xs text-slate-800 font-medium">
+                  <div className="w-4 h-4 rounded-full bg-indigo-600 text-white flex items-center justify-center text-[9px] font-bold">
+                    {(user.name || user.email)[0].toUpperCase()}
+                  </div>
+                  <span className="max-w-[70px] truncate">{user.name || user.email?.split("@")[0]}</span>
+                </div>
               )}
               <button
                 onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-                className="p-2 text-gray-400 hover:text-white rounded-lg focus:outline-none"
+                className="p-2 text-slate-500 hover:text-slate-900 rounded-lg focus:outline-none"
               >
                 {mobileMenuOpen ? <X className="w-6 h-6" /> : <Menu className="w-6 h-6" />}
               </button>
@@ -208,11 +214,11 @@ export default function Navbar() {
               })}
             </div>
             {user && (
-              <div className="pt-3 border-t border-surface-border flex items-center justify-between">
-                <span className="text-xs text-gray-400 truncate">{user.email}</span>
+              <div className="pt-3 border-t border-slate-200 flex items-center justify-between">
+                <span className="text-xs text-slate-600 truncate font-medium">{user.email}</span>
                 <button
                   onClick={handleSignOut}
-                  className="text-xs text-rose-400 font-semibold"
+                  className="text-xs text-rose-600 font-semibold hover:underline"
                 >
                   Sign Out
                 </button>
