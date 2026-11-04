@@ -25,8 +25,12 @@ import {
   ShieldCheck
 } from "lucide-react";
 import { formatINR, formatPercent } from "@/lib/utils";
+import { getCurrentUser, onAuthChange, AuthUser } from "@/lib/supabase";
+import LoginGateway from "@/components/LoginGateway";
 
 export default function MarketOverviewPage() {
+  const [user, setUser] = useState<AuthUser | null>(null);
+  const [authChecking, setAuthChecking] = useState(true);
   const [data, setData] = useState<MarketOverviewResponse | null>(null);
   const [niftyStocks, setNiftyStocks] = useState<Nifty50Stock[]>([]);
   const [loading, setLoading] = useState(true);
@@ -55,8 +59,26 @@ export default function MarketOverviewPage() {
   };
 
   useEffect(() => {
-    fetchOverview();
-  }, []);
+    // Check initial user authentication
+    getCurrentUser().then((u) => {
+      setUser(u);
+      setAuthChecking(false);
+      if (u) {
+        fetchOverview();
+      }
+    });
+
+    // Listen to real-time auth changes (e.g. login or sign out)
+    const unsubscribe = onAuthChange((u) => {
+      setUser(u);
+      setAuthChecking(false);
+      if (u && !data) {
+        fetchOverview();
+      }
+    });
+
+    return () => unsubscribe();
+  }, [data]);
 
   const handleOpenAlert = (sym: string, price: number) => {
     setAlertModalSymbol(sym);
@@ -66,10 +88,46 @@ export default function MarketOverviewPage() {
 
   const isMarketOpen = data?.market_status === "OPEN";
 
+  // 1. Session verification loading state
+  if (authChecking) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-[60vh] space-y-4">
+        <RefreshCw className="w-8 h-8 text-indigo-600 animate-spin" />
+        <p className="text-sm text-slate-500 font-medium">Verifying authentication session...</p>
+      </div>
+    );
+  }
+
+  // 2. Unauthenticated state: show Email OTP Login Gateway
+  if (!user) {
+    return (
+      <LoginGateway
+        onSuccess={(authenticatedUser) => {
+          setUser(authenticatedUser);
+          fetchOverview();
+        }}
+      />
+    );
+  }
+
+  // 3. Authenticated state: show full MarketMind India Dashboard
   return (
     <div className="space-y-8">
       {/* SEBI Compliance Banner */}
       <DisclaimerBanner />
+
+      {/* User Authenticated Welcome Chip */}
+      <div className="flex items-center justify-between bg-indigo-50/70 border border-indigo-200/80 rounded-xl px-4 py-2.5 text-xs text-indigo-900 shadow-sm">
+        <div className="flex items-center gap-2">
+          <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0" />
+          <span>
+            Authenticated as <strong className="font-bold text-indigo-950">{user.email}</strong> &bull; Personalized watchlists & alerts active
+          </span>
+        </div>
+        <span className="hidden sm:inline-flex px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[11px] font-bold">
+          Email Verified ✓
+        </span>
+      </div>
 
       {/* Hero Section */}
       <div className="relative overflow-hidden rounded-2xl bg-gradient-to-b from-surface-card to-surface border border-surface-border p-6 sm:p-10 shadow-2xl text-center">
