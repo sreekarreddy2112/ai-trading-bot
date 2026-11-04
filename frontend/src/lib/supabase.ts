@@ -1,8 +1,11 @@
 import { createClient } from "@supabase/supabase-js";
 import { api } from "./api";
 
-const rawUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
-const rawKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
+const FALLBACK_SUPABASE_URL = "https://unkrcdpscnzwlwpridjt.supabase.co";
+const FALLBACK_SUPABASE_ANON_KEY = "sb_publishable_wieVUbLjOy02kgQwxSEMsw_Lg9toMIr";
+
+const rawUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || FALLBACK_SUPABASE_URL;
+const rawKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || FALLBACK_SUPABASE_ANON_KEY;
 
 export const isSupabaseConfigured = Boolean(
   rawUrl &&
@@ -11,8 +14,8 @@ export const isSupabaseConfigured = Boolean(
   !rawKey.includes("placeholder")
 );
 
-const supabaseUrl = isSupabaseConfigured ? rawUrl : "https://placeholder.supabase.co";
-const supabaseAnonKey = isSupabaseConfigured ? rawKey : "placeholder-anon-key";
+const supabaseUrl = rawUrl;
+const supabaseAnonKey = rawKey;
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   auth: {
@@ -94,7 +97,7 @@ export async function getCurrentUser(): Promise<AuthUser | null> {
 export async function requestEmailOTP(email: string): Promise<{ message: string }> {
   const cleanEmail = email.trim().toLowerCase();
 
-  // Try Supabase OTP if configured (delivers directly to user's inbox)
+  // 1. Deliver directly to user inbox via Supabase Auth Email OTP
   if (isSupabaseConfigured) {
     try {
       const { error } = await supabase.auth.signInWithOtp({
@@ -103,17 +106,16 @@ export async function requestEmailOTP(email: string): Promise<{ message: string 
           shouldCreateUser: true,
         },
       });
-      if (!error) {
-        return { message: `Verification code sent directly to ${cleanEmail}. Please check your inbox.` };
-      } else {
-        console.warn("Supabase OTP notice:", error.message);
+      if (error) {
+        throw new Error(error.message);
       }
+      return { message: `Verification code sent directly to ${cleanEmail}. Please check your inbox.` };
     } catch (err: any) {
-      console.warn("Supabase OTP fallback to backend:", err.message);
+      console.warn("Supabase OTP failed, attempting backend delivery:", err.message);
     }
   }
 
-  // Call backend OTP endpoint (delivers directly via SMTP/Resend)
+  // 2. Call backend OTP endpoint (delivers directly via SMTP/Resend)
   const res = await api.sendOTP(cleanEmail);
   return {
     message: res.message,
@@ -124,7 +126,7 @@ export async function verifyEmailOTP(email: string, otp: string): Promise<AuthUs
   const cleanEmail = email.trim().toLowerCase();
   const cleanOtp = otp.trim();
 
-  // Try Supabase verifyOtp if configured
+  // 1. Try Supabase verifyOtp first
   if (isSupabaseConfigured) {
     try {
       const { data, error } = await supabase.auth.verifyOtp({
@@ -132,22 +134,48 @@ export async function verifyEmailOTP(email: string, otp: string): Promise<AuthUs
         token: cleanOtp,
         type: "email",
       });
-      if (!error && data.user) {
+      if (error) {
+        throw new Error(error.message);
+      }
+      if (data.user) {
         const u: AuthUser = {
           id: data.user.id,
           email: data.user.email || cleanEmail,
           name: data.user.user_metadata?.full_name || cleanEmail.split("@")[0].toUpperCase(),
           provider: "supabase",
         };
+        if (typeof window !== "undefined") {
+          localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(u));
+        }
         notifyListeners(u);
         return u;
       }
     } catch (err: any) {
-      console.warn("Supabase verifyOtp fallback to backend:", err.message);
+      console.warn("Supabase verifyOtp error:", err.message);
+      // If user requested via backend OTP instead, try backend
+      try {
+        const res = await api.verifyOTP(cleanEmail, cleanOtp);
+        const user: AuthUser = {
+          id: res.user.id,
+          email: res.user.email,
+          name: res.user.name,
+          provider: "local",
+        };
+        if (typeof window !== "undefined") {
+          localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(user));
+          if (res.token) {
+            localStorage.setItem(LOCAL_TOKEN_KEY, res.token);
+          }
+        }
+        notifyListeners(user);
+        return user;
+      } catch {
+        throw new Error(err.message || "Invalid or expired verification code. Please check your email inbox.");
+      }
     }
   }
 
-  // Call backend verify-otp endpoint
+  // 2. Call backend verify-otp endpoint directly
   const res = await api.verifyOTP(cleanEmail, cleanOtp);
   const user: AuthUser = {
     id: res.user.id,
