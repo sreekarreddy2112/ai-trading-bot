@@ -21,11 +21,30 @@ import {
 } from "./types";
 import { getAuthHeader } from "./supabase";
 
-const rawBase = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-const API_BASE = rawBase.trim().replace(/\/+$/, "");
+function getApiUrl(endpoint: string): string {
+  if (typeof window !== "undefined") {
+    const host = window.location.hostname;
+    const isLocal = host === "localhost" || host === "127.0.0.1";
+    const envApi = process.env.NEXT_PUBLIC_API_URL;
+
+    // 1. If explicit HTTPS backend is configured, use it
+    if (envApi && envApi.startsWith("https://")) {
+      return `${envApi.replace(/\/+$/, "")}${endpoint}`;
+    }
+
+    // 2. If running on Vercel or any remote domain, use relative endpoint to hit Next.js Route Handlers directly
+    if (!isLocal) {
+      return endpoint;
+    }
+  }
+
+  // Local development fallback to FastAPI
+  const base = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000").trim().replace(/\/+$/, "");
+  return `${base}${endpoint}`;
+}
 
 async function fetchJson<T>(endpoint: string, options?: RequestInit): Promise<T> {
-  const url = `${API_BASE}${endpoint}`;
+  const url = getApiUrl(endpoint);
   const authHeaders = await getAuthHeader();
 
   const res = await fetch(url, {
