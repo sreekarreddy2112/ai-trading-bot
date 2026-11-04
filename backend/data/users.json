@@ -38,5 +38,15 @@
     "password_hash": "76898d105ff93c1145abfc3cfef5ece177f1e9631109f1584df81637d339e29d",
     "salt": "848e8d32f79574f64f54aafc63304b15",
     "created_at": "2026-11-04 15:22:51 IST"
+  },
+  "usr_4ba8c1b73f0f3072": {
+    "id": "usr_4ba8c1b73f0f3072",
+    "email": "user_842534d3@marketmind.in",
+    "username": "trader_842534d3",
+    "phone": "9871270554",
+    "name": "Trader_842534d3",
+    "password_hash": "1f98d9213f1a40c8934397f2e0875329de5a7f25b3ef86601267f10b2496fbdb",
+    "salt": "b3ff5dda7eb0b729809ad252d2368d5a",
+    "created_at": "2026-11-04 16:36:35 IST"
   }
 }

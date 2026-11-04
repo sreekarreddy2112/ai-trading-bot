@@ -529,3 +529,8 @@ Return ONLY raw JSON."""
         generated_at=time.strftime("%Y-%m-%d %H:%M:%S IST"),
         disclaimer=settings.SEBI_DISCLAIMER
     )
+
+
+# Alias for backwards compatibility with router
+evaluate_ipo_with_ai = generate_ipo_ai_verdict
+

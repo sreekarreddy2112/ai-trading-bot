@@ -131,3 +131,4 @@ export async function GET() {
     market_sentiment: "BULLISH",
   });
 }
+
