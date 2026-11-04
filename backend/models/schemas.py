@@ -329,7 +329,6 @@ class SendOTPResponse(BaseModel):
     message: str
     email: str
     expires_in_seconds: int = 600
-    demo_otp: Optional[str] = None
 
 class VerifyOTPRequest(BaseModel):
     email: str

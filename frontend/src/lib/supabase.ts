@@ -91,10 +91,10 @@ export async function getCurrentUser(): Promise<AuthUser | null> {
   return null;
 }
 
-export async function requestEmailOTP(email: string): Promise<{ demo_otp?: string; message: string }> {
+export async function requestEmailOTP(email: string): Promise<{ message: string }> {
   const cleanEmail = email.trim().toLowerCase();
 
-  // Try Supabase OTP if configured
+  // Try Supabase OTP if configured (delivers directly to user's inbox)
   if (isSupabaseConfigured) {
     try {
       const { error } = await supabase.auth.signInWithOtp({
@@ -104,17 +104,18 @@ export async function requestEmailOTP(email: string): Promise<{ demo_otp?: strin
         },
       });
       if (!error) {
-        return { message: `Verification code sent to ${cleanEmail}` };
+        return { message: `Verification code sent directly to ${cleanEmail}. Please check your inbox.` };
+      } else {
+        console.warn("Supabase OTP notice:", error.message);
       }
     } catch (err: any) {
       console.warn("Supabase OTP fallback to backend:", err.message);
     }
   }
 
-  // Call backend OTP endpoint
+  // Call backend OTP endpoint (delivers directly via SMTP/Resend)
   const res = await api.sendOTP(cleanEmail);
   return {
-    demo_otp: res.demo_otp,
     message: res.message,
   };
 }

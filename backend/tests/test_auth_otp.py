@@ -8,6 +8,7 @@ from routers.auth import (
     _otp_store,
 )
 from models.schemas import SendOTPRequest, VerifyOTPRequest
+from config import settings
 
 def test_validate_email_syntax():
     assert validate_email_syntax("trader@marketmind.in") == "trader@marketmind.in"
@@ -19,16 +20,23 @@ def test_validate_email_syntax():
     with pytest.raises(HTTPException):
         validate_email_syntax("@missingusername.com")
 
-def test_send_and_verify_otp_lifecycle():
+def test_send_and_verify_otp_lifecycle(monkeypatch):
     _otp_store.clear()
     email = "investor.test@marketmind.in"
+
+    # Mock send_email_direct to simulate successful email delivery
+    import routers.auth as auth_mod
+    monkeypatch.setattr(auth_mod, "send_email_direct", lambda to_email, code: True)
 
     # 1. Send OTP
     send_res = send_otp(SendOTPRequest(email=email))
     assert send_res.status == "sent"
     assert send_res.email == email
-    assert send_res.demo_otp is not None
-    assert len(send_res.demo_otp) == 6
+    
+    # Verify code was stored in server session
+    assert email in _otp_store
+    otp_code = _otp_store[email]["code"]
+    assert len(otp_code) == 6
 
     # 2. Verify with wrong code
     with pytest.raises(HTTPException) as exc_info:
@@ -36,7 +44,7 @@ def test_send_and_verify_otp_lifecycle():
     assert "Invalid verification code" in exc_info.value.detail
 
     # 3. Verify with correct code
-    verify_res = verify_otp(VerifyOTPRequest(email=email, otp=send_res.demo_otp))
+    verify_res = verify_otp(VerifyOTPRequest(email=email, otp=otp_code))
     assert verify_res.status == "verified"
     assert verify_res.user.email == email
     assert verify_res.user.verified is True

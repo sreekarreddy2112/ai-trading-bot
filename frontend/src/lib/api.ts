@@ -129,7 +129,6 @@ export const api = {
       message: string;
       email: string;
       expires_in_seconds: number;
-      demo_otp?: string;
     }>("/api/auth/send-otp", {
       method: "POST",
       body: JSON.stringify({ email }),
@@ -152,7 +151,6 @@ export const api = {
       message: string;
       email: string;
       expires_in_seconds: number;
-      demo_otp?: string;
     }>("/api/auth/resend-otp", {
       method: "POST",
       body: JSON.stringify({ email }),
