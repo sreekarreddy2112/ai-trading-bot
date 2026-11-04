@@ -319,8 +319,32 @@ class IPOAIVerdict(BaseModel):
     disclaimer: str
 
 
-# ----------------- User Authentication & Email OTP -----------------
+# ----------------- User Authentication (Email, Username, Phone & Password) -----------------
 
+class UserRegisterRequest(BaseModel):
+    email: str
+    username: str
+    phone: str
+    password: str
+
+class UserLoginRequest(BaseModel):
+    identifier: str  # email, username, or phone
+    password: str
+
+class UserProfileResponse(BaseModel):
+    id: str
+    email: str
+    username: str
+    phone: str
+    name: str
+
+class AuthTokenResponse(BaseModel):
+    status: str
+    message: str
+    token: str
+    user: UserProfileResponse
+
+# Backward-compatibility schemas
 class SendOTPRequest(BaseModel):
     email: str
 
@@ -345,5 +369,6 @@ class VerifyOTPResponse(BaseModel):
     message: str
     token: str
     user: AuthUserResponse
+
 
 

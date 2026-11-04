@@ -14,6 +14,10 @@ import {
   CreateAlertRequest,
   AlertItem,
   AlertListResponse,
+  UserRegisterRequest,
+  UserLoginRequest,
+  AuthSuccessResponse,
+  AuthUserProfile,
 } from "./types";
 import { getAuthHeader } from "./supabase";
 
@@ -122,7 +126,22 @@ export const api = {
       method: "POST",
     }),
 
-  // Email OTP Authentication
+  // Direct Authentication (Email, Username, Phone & Password)
+  registerUser: (data: UserRegisterRequest) =>
+    fetchJson<AuthSuccessResponse>("/api/auth/register", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+
+  loginUser: (data: UserLoginRequest) =>
+    fetchJson<AuthSuccessResponse>("/api/auth/login", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+
+  getCurrentUser: () => fetchJson<AuthUserProfile>("/api/auth/me"),
+
+  // Legacy stubs
   sendOTP: (email: string) =>
     fetchJson<{
       status: string;

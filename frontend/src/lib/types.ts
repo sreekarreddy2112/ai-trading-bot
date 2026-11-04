@@ -322,3 +322,30 @@ export interface IPOAIVerdict {
   disclaimer: string;
 }
 
+export interface UserRegisterRequest {
+  email: string;
+  username: string;
+  phone: string;
+  password: string;
+}
+
+export interface UserLoginRequest {
+  identifier: string; // email, username, or phone
+  password: string;
+}
+
+export interface AuthUserProfile {
+  id: string;
+  email: string;
+  username: string;
+  phone: string;
+  name: string;
+}
+
+export interface AuthSuccessResponse {
+  status: string;
+  message: string;
+  token: string;
+  user: AuthUserProfile;
+}
+

@@ -1,16 +1,19 @@
 import re
+import os
 import time
 import base64
 import json
 import secrets
-import smtplib
+import hashlib
 import logging
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
+from pathlib import Path
 from typing import Dict, Any, Optional
-from fastapi import APIRouter, HTTPException, status
-from config import settings
+from fastapi import APIRouter, HTTPException, status, Header
 from models.schemas import (
+    UserRegisterRequest,
+    UserLoginRequest,
+    UserProfileResponse,
+    AuthTokenResponse,
     SendOTPRequest,
     SendOTPResponse,
     VerifyOTPRequest,
@@ -18,34 +21,74 @@ from models.schemas import (
     AuthUserResponse,
 )
 
-router = APIRouter(prefix="/api/auth", tags=["Authentication & OTP"])
+router = APIRouter(prefix="/api/auth", tags=["User Authentication"])
 logger = logging.getLogger("MarketMind.Auth")
 
-# In-memory store for OTPs: email -> { code, expires_at, attempts, last_sent }
-_otp_store: Dict[str, Dict[str, Any]] = {}
-
 EMAIL_REGEX = re.compile(r"^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$")
+PHONE_REGEX = re.compile(r"^\+?[0-9]{7,15}$")
+USERNAME_REGEX = re.compile(r"^[a-zA-Z0-9_.-]{3,30}$")
+
+# Persistent User Storage (file-backed JSON)
+USERS_FILE = Path(__file__).resolve().parent.parent / "data" / "users.json"
+_users_db: Dict[str, Dict[str, Any]] = {}
 
 
-def validate_email_syntax(email: str) -> str:
-    """Validates email format and normalizes to lower case."""
-    clean = email.strip().lower()
-    if not clean or len(clean) > 254:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid email address: length must be between 3 and 254 characters.",
-        )
-    if not EMAIL_REGEX.match(clean):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid email format. Please provide a valid email (e.g., investor@example.com).",
-        )
-    return clean
+def hash_password(password: str, salt: Optional[str] = None) -> tuple[str, str]:
+    """Generates PBKDF2 HMAC SHA-256 hash with cryptographic salt."""
+    if not salt:
+        salt = secrets.token_hex(16)
+    key = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), 100000)
+    return key.hex(), salt
 
 
-def generate_secure_otp() -> str:
-    """Generates a 6-digit numeric OTP."""
-    return f"{secrets.randbelow(900000) + 100000}"
+def verify_password(password: str, hashed: str, salt: str) -> bool:
+    """Verifies a password against its PBKDF2 hash using constant-time comparison."""
+    key = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), 100000)
+    return secrets.compare_digest(key.hex(), hashed)
+
+
+def load_users():
+    """Loads stored users from data/users.json."""
+    global _users_db
+    try:
+        USERS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        if USERS_FILE.exists():
+            with open(USERS_FILE, "r", encoding="utf-8") as f:
+                _users_db = json.load(f)
+                logger.info(f"Loaded {len(_users_db)} users from {USERS_FILE}")
+                return
+    except Exception as e:
+        logger.warning(f"Could not load users file: {e}")
+
+    # Seed default investor account if empty
+    if not _users_db:
+        h, s = hash_password("password123")
+        demo_id = "usr_demo_investor"
+        _users_db[demo_id] = {
+            "id": demo_id,
+            "email": "demo@marketmind.in",
+            "username": "demo_investor",
+            "phone": "9876543210",
+            "name": "Demo Investor",
+            "password_hash": h,
+            "salt": s,
+            "created_at": time.strftime("%Y-%m-%d %H:%M:%S IST"),
+        }
+        save_users()
+
+
+def save_users():
+    """Persists user dictionary to JSON file."""
+    try:
+        USERS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with open(USERS_FILE, "w", encoding="utf-8") as f:
+            json.dump(_users_db, f, indent=2)
+    except Exception as e:
+        logger.error(f"Failed to persist users to file: {e}")
+
+
+# Initialize storage on startup
+load_users()
 
 
 def generate_auth_token(user_id: str, email: str) -> str:
@@ -57,7 +100,7 @@ def generate_auth_token(user_id: str, email: str) -> str:
         "verified": True,
         "iss": "MarketMind India",
         "iat": int(time.time()),
-        "exp": int(time.time()) + 7 * 24 * 3600,
+        "exp": int(time.time()) + 30 * 24 * 3600,
     }
     h_b64 = base64.urlsafe_b64encode(json.dumps(header).encode()).decode().rstrip("=")
     p_b64 = base64.urlsafe_b64encode(json.dumps(payload).encode()).decode().rstrip("=")
@@ -65,219 +108,237 @@ def generate_auth_token(user_id: str, email: str) -> str:
     return f"{h_b64}.{p_b64}.{sig}"
 
 
-def get_email_html(otp_code: str) -> str:
-    """Returns styled HTML email template for OTP delivery."""
-    return f"""
-    <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 520px; margin: 0 auto; padding: 24px; border: 1px solid #e2e8f0; border-radius: 16px; background-color: #ffffff;">
-      <div style="text-align: center; margin-bottom: 24px;">
-        <h2 style="color: #0f172a; margin: 0; font-size: 24px;">MarketMind <span style="color: #4f46e5;">India</span></h2>
-        <p style="color: #64748b; font-size: 13px; margin-top: 4px;">Quantitative Equity Intelligence & Stock Analytics</p>
-      </div>
-      
-      <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 20px; text-align: center; margin-bottom: 24px;">
-        <p style="color: #475569; font-size: 14px; margin: 0 0 12px 0;">Your 6-digit login verification code:</p>
-        <div style="font-size: 38px; font-weight: 800; letter-spacing: 8px; color: #4f46e5; font-family: monospace; padding: 8px 0;">
-          {otp_code}
-        </div>
-        <p style="color: #94a3b8; font-size: 12px; margin: 8px 0 0 0;">Valid for 10 minutes. Do not share this code with anyone.</p>
-      </div>
+def normalize_phone(phone: str) -> str:
+    """Removes spaces, hyphens, and standardizes phone digits."""
+    return re.sub(r"[\s\-\(\)]", "", phone.strip())
 
-      <p style="color: #64748b; font-size: 12px; line-height: 1.5; margin: 0;">
-        If you did not request this verification code, you can safely ignore this email.
-      </p>
-      <hr style="border: 0; border-top: 1px solid #e2e8f0; margin: 20px 0;" />
-      <p style="color: #94a3b8; font-size: 11px; text-align: center; margin: 0;">
-        MarketMind India &bull; Strictly for Educational & Quantitative Analytics &bull; SEBI Compliant
-      </p>
-    </div>
+
+def normalize_phone_digits(phone: str) -> str:
+    """Extracts only digits and strips leading 0 or 91 country code for flexible matching."""
+    digits = re.sub(r"[^0-9]", "", phone)
+    if digits.startswith("91") and len(digits) == 12:
+        return digits[2:]
+    if digits.startswith("0") and len(digits) == 11:
+        return digits[1:]
+    return digits
+
+
+def find_user_by_identifier(identifier: str) -> Optional[Dict[str, Any]]:
+    """Looks up user by email, username, or phone number."""
+    raw = identifier.strip().lower()
+    raw_digits = normalize_phone_digits(identifier)
+
+    for u in _users_db.values():
+        if u.get("email", "").lower() == raw:
+            return u
+        if u.get("username", "").lower() == raw:
+            return u
+        u_phone_digits = normalize_phone_digits(u.get("phone", ""))
+        if u_phone_digits and raw_digits and u_phone_digits == raw_digits:
+            return u
+
+    return None
+
+
+# ----------------- 1. REGISTER NEW USER -----------------
+
+@router.post("/register", response_model=AuthTokenResponse)
+def register_user(req: UserRegisterRequest):
     """
+    Registers a new user account with Email, Username, Phone Number, and Password.
+    No OTP required - user is signed in immediately upon successful registration.
+    """
+    # 1. Validate Email
+    clean_email = req.email.strip().lower()
+    if not EMAIL_REGEX.match(clean_email):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Please provide a valid email address (e.g., user@example.com).",
+        )
 
+    # 2. Validate Username
+    clean_username = req.username.strip().lower()
+    if not USERNAME_REGEX.match(clean_username):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Username must be 3-30 characters and contain only letters, numbers, hyphens, or underscores.",
+        )
 
-def send_smtp_email(to_email: str, otp_code: str) -> bool:
-    """Sends OTP email via configured SMTP server."""
-    if not (settings.SMTP_HOST and settings.SMTP_USER and settings.SMTP_PASSWORD):
-        return False
+    # 3. Validate Phone Number
+    clean_phone = normalize_phone(req.phone)
+    if not PHONE_REGEX.match(clean_phone):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Please provide a valid phone number with 7 to 15 digits (e.g. 9876543210 or +919876543210).",
+        )
 
-    try:
-        msg = MIMEMultipart("alternative")
-        msg["Subject"] = f"Your MarketMind India Verification Code: {otp_code}"
-        msg["From"] = settings.SMTP_FROM_EMAIL
-        msg["To"] = to_email
+    # 4. Validate Password
+    clean_password = req.password.strip()
+    if len(clean_password) < 6:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Password must be at least 6 characters in length.",
+        )
 
-        html_body = get_email_html(otp_code)
-        msg.attach(MIMEText(html_body, "html"))
-
-        if settings.SMTP_PORT == 465:
-            with smtplib.SMTP_SSL(settings.SMTP_HOST, settings.SMTP_PORT, timeout=10) as server:
-                server.login(settings.SMTP_USER, settings.SMTP_PASSWORD)
-                server.sendmail(settings.SMTP_FROM_EMAIL, [to_email], msg.as_string())
-        else:
-            with smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT, timeout=10) as server:
-                server.starttls()
-                server.login(settings.SMTP_USER, settings.SMTP_PASSWORD)
-                server.sendmail(settings.SMTP_FROM_EMAIL, [to_email], msg.as_string())
-        
-        logger.info(f"Successfully sent OTP email via SMTP to {to_email}")
-        return True
-    except Exception as e:
-        logger.error(f"Failed to send SMTP email to {to_email}: {e}")
-        return False
-
-
-def send_email_direct(to_email: str, otp_code: str) -> bool:
-    """Attempts to deliver verification email via Resend API or SMTP."""
-    # 1. Resend API
-    if settings.RESEND_API_KEY:
-        try:
-            import httpx
-            res = httpx.post(
-                "https://api.resend.com/emails",
-                headers={
-                    "Authorization": f"Bearer {settings.RESEND_API_KEY}",
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "from": settings.SMTP_FROM_EMAIL or "MarketMind <onboarding@resend.dev>",
-                    "to": [to_email],
-                    "subject": f"Your MarketMind India Verification Code: {otp_code}",
-                    "html": get_email_html(otp_code),
-                },
-                timeout=10,
+    # 5. Check Uniqueness
+    for u in _users_db.values():
+        if u.get("email", "").lower() == clean_email:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"An account with email '{clean_email}' already exists. Please sign in.",
             )
-            if res.status_code in (200, 201):
-                logger.info(f"Successfully sent OTP via Resend API to {to_email}")
-                return True
-            else:
-                logger.error(f"Resend API error: {res.status_code} - {res.text}")
-        except Exception as e:
-            logger.error(f"Resend dispatch error: {e}")
+        if u.get("username", "").lower() == clean_username:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Username '{clean_username}' is already taken. Please choose another username.",
+            )
+        if normalize_phone(u.get("phone", "")) == clean_phone:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Phone number '{clean_phone}' is already registered with another account.",
+            )
 
-    # 2. Standard SMTP (Gmail, Brevo, SendGrid, Amazon SES)
-    if settings.SMTP_HOST and settings.SMTP_USER and settings.SMTP_PASSWORD:
-        return send_smtp_email(to_email, otp_code)
-
-    return False
-
-
-@router.post("/send-otp", response_model=SendOTPResponse)
-def send_otp(req: SendOTPRequest):
-    """
-    Validates user email and delivers a real 6-digit OTP directly to their inbox.
-    Includes rate-limiting (cooldown 45 seconds between requests).
-    """
-    clean_email = validate_email_syntax(req.email)
-    now = time.time()
-
-    # Rate limiting: 45 seconds cooldown
-    existing = _otp_store.get(clean_email)
-    if existing and (now - existing.get("last_sent", 0) < 45):
-        remaining = int(45 - (now - existing["last_sent"]))
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail=f"Please wait {remaining} seconds before requesting a new verification code.",
-        )
-
-    # Generate 6-digit OTP
-    otp_code = generate_secure_otp()
-    expires_at = now + 600  # 10 minutes
-
-    # Deliver directly to the user's email
-    delivered = send_email_direct(clean_email, otp_code)
-    if not delivered:
-        # If SMTP is not yet configured, log clearly and alert the admin
-        logger.warning(
-            f"Could not dispatch email to {clean_email}. SMTP or Resend credentials not configured in backend/.env"
-        )
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=(
-                "Email delivery service is currently not configured on the server. "
-                "Please configure SMTP credentials (e.g. Gmail App Password, Brevo, or Resend) in backend/.env, "
-                "or enable Supabase Auth Email provider."
-            ),
-        )
-
-    _otp_store[clean_email] = {
-        "code": otp_code,
-        "expires_at": expires_at,
-        "attempts": 0,
-        "last_sent": now,
+    # 6. Create Account
+    user_id = f"usr_{secrets.token_hex(8)}"
+    p_hash, p_salt = hash_password(clean_password)
+    user_record = {
+        "id": user_id,
+        "email": clean_email,
+        "username": clean_username,
+        "phone": clean_phone,
+        "name": clean_username.capitalize(),
+        "password_hash": p_hash,
+        "salt": p_salt,
+        "created_at": time.strftime("%Y-%m-%d %H:%M:%S IST"),
     }
 
+    _users_db[user_id] = user_record
+    save_users()
+
+    token = generate_auth_token(user_id, clean_email)
+    logger.info(f"User registered successfully: {clean_username} ({clean_email})")
+
+    return AuthTokenResponse(
+        status="success",
+        message="Account created successfully! Welcome to MarketMind India.",
+        token=token,
+        user=UserProfileResponse(
+            id=user_id,
+            email=clean_email,
+            username=clean_username,
+            phone=clean_phone,
+            name=user_record["name"],
+        ),
+    )
+
+
+# ----------------- 2. SIGN IN USER -----------------
+
+@router.post("/login", response_model=AuthTokenResponse)
+def login_user(req: UserLoginRequest):
+    """
+    Signs in an existing user using either their Email, Username, or Phone Number, plus Password.
+    """
+    raw_identifier = req.identifier.strip()
+    if not raw_identifier:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Please enter your Email, Username, or Phone number.",
+        )
+
+    raw_password = req.password.strip()
+    if not raw_password:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Please enter your password.",
+        )
+
+    # Find by email, username, or phone
+    user_record = find_user_by_identifier(raw_identifier)
+    if not user_record:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid credentials. No account found matching that email, username, or phone number.",
+        )
+
+    # Verify Password
+    if not verify_password(raw_password, user_record["password_hash"], user_record["salt"]):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect password. Please verify and try again.",
+        )
+
+    token = generate_auth_token(user_record["id"], user_record["email"])
+    logger.info(f"User signed in successfully: {user_record['username']} ({user_record['email']})")
+
+    return AuthTokenResponse(
+        status="success",
+        message=f"Welcome back, {user_record['name']}!",
+        token=token,
+        user=UserProfileResponse(
+            id=user_record["id"],
+            email=user_record["email"],
+            username=user_record["username"],
+            phone=user_record["phone"],
+            name=user_record["name"],
+        ),
+    )
+
+
+# ----------------- 3. CURRENT USER PROFILE -----------------
+
+@router.get("/me", response_model=UserProfileResponse)
+def get_current_user_profile(authorization: Optional[str] = Header(None)):
+    """Retrieves profile of the currently signed-in user."""
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+
+    token = authorization.split(" ")[1]
+    try:
+        parts = token.split(".")
+        if len(parts) >= 2:
+            payload_b64 = parts[1] + "=" * (-len(parts[1]) % 4)
+            payload_json = json.loads(base64.urlsafe_b64decode(payload_b64.encode()))
+            user_id = str(payload_json.get("sub", ""))
+            if user_id in _users_db:
+                u = _users_db[user_id]
+                return UserProfileResponse(
+                    id=u["id"],
+                    email=u["email"],
+                    username=u["username"],
+                    phone=u["phone"],
+                    name=u["name"],
+                )
+    except Exception as e:
+        logger.debug(f"Auth token decode error: {e}")
+
+    raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Session expired or invalid")
+
+
+# ----------------- 4. BACKWARD COMPATIBILITY (LEGACY OTP STUBS) -----------------
+
+@router.post("/send-otp", response_model=SendOTPResponse)
+def send_otp_legacy(req: SendOTPRequest):
     return SendOTPResponse(
-        status="sent",
-        message=f"Verification code sent directly to {clean_email}. Please check your inbox.",
-        email=clean_email,
+        status="success",
+        message="Please use standard email, username, phone, and password sign-in.",
+        email=req.email.strip().lower(),
         expires_in_seconds=600,
     )
 
 
 @router.post("/verify-otp", response_model=VerifyOTPResponse)
-def verify_otp(req: VerifyOTPRequest):
-    """
-    Verifies user-provided 6-digit OTP against active stored session.
-    Returns JWT authentication token upon success.
-    """
-    clean_email = validate_email_syntax(req.email)
-    clean_otp = req.otp.strip()
-    now = time.time()
-
-    record = _otp_store.get(clean_email)
-    if not record:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="No active verification session found. Please request a new code.",
-        )
-
-    # Expiry check
-    if now > record["expires_at"]:
-        _otp_store.pop(clean_email, None)
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Verification code has expired. Please request a new code.",
-        )
-
-    # Brute-force protection: Maximum 5 attempts
-    if record["attempts"] >= 5:
-        _otp_store.pop(clean_email, None)
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail="Too many invalid attempts. For your security, this code was invalidated. Please request a new code.",
-        )
-
-    # Code comparison
-    if clean_otp != record["code"]:
-        record["attempts"] += 1
-        remaining_attempts = 5 - record["attempts"]
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid verification code. {remaining_attempts} attempts remaining.",
-        )
-
-    # Successful verification! Clear OTP
-    _otp_store.pop(clean_email, None)
-
-    # Derive consistent user id
+def verify_otp_legacy(req: VerifyOTPRequest):
+    clean_email = req.email.strip().lower()
     user_id = f"usr_{clean_email.replace('@', '_').replace('.', '_')}"
-    token = generate_auth_token(user_id, clean_email)
-    user_name = clean_email.split("@")[0].upper()
-
-    logger.info(f"✅ User {clean_email} verified successfully!")
-
     return VerifyOTPResponse(
-        status="verified",
-        message="Email verified and signed in successfully!",
-        token=token,
+        status="success",
+        message="Verified",
+        token=generate_auth_token(user_id, clean_email),
         user=AuthUserResponse(
             id=user_id,
             email=clean_email,
-            name=user_name,
+            name=clean_email.split("@")[0].capitalize(),
             verified=True,
         ),
     )
-
-
-@router.post("/resend-otp", response_model=SendOTPResponse)
-def resend_otp(req: SendOTPRequest):
-    """Resend a fresh OTP directly to the user's email."""
-    return send_otp(req)

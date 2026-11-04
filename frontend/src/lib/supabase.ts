@@ -27,8 +27,10 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
 export interface AuthUser {
   id: string;
   email: string;
+  username?: string;
+  phone?: string;
   name?: string;
-  provider: "supabase" | "local";
+  provider: "backend" | "supabase" | "local";
 }
 
 const LOCAL_STORAGE_KEY = "marketmind_user_session";
@@ -43,6 +45,58 @@ function notifyListeners(user: AuthUser | null) {
       // ignore
     }
   });
+}
+
+export async function signUpUser(req: {
+  email: string;
+  username: string;
+  phone: string;
+  password: string;
+}): Promise<AuthUser> {
+  const res = await api.registerUser(req);
+  const user: AuthUser = {
+    id: res.user.id,
+    email: res.user.email,
+    username: res.user.username,
+    phone: res.user.phone,
+    name: res.user.name || res.user.username,
+    provider: "backend",
+  };
+
+  if (typeof window !== "undefined") {
+    localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(user));
+    if (res.token) {
+      localStorage.setItem(LOCAL_TOKEN_KEY, res.token);
+    }
+  }
+
+  notifyListeners(user);
+  return user;
+}
+
+export async function signInUser(req: {
+  identifier: string;
+  password: string;
+}): Promise<AuthUser> {
+  const res = await api.loginUser(req);
+  const user: AuthUser = {
+    id: res.user.id,
+    email: res.user.email,
+    username: res.user.username,
+    phone: res.user.phone,
+    name: res.user.name || res.user.username,
+    provider: "backend",
+  };
+
+  if (typeof window !== "undefined") {
+    localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(user));
+    if (res.token) {
+      localStorage.setItem(LOCAL_TOKEN_KEY, res.token);
+    }
+  }
+
+  notifyListeners(user);
+  return user;
 }
 
 function createLocalToken(id: string, email: string): string {
@@ -96,6 +150,7 @@ export async function getCurrentUser(): Promise<AuthUser | null> {
 
 export async function requestEmailOTP(email: string): Promise<{ message: string }> {
   const cleanEmail = email.trim().toLowerCase();
+  let supabaseErrMsg: string | null = null;
 
   // 1. Deliver directly to user inbox via Supabase Auth Email OTP
   if (isSupabaseConfigured) {
@@ -106,20 +161,33 @@ export async function requestEmailOTP(email: string): Promise<{ message: string 
           shouldCreateUser: true,
         },
       });
-      if (error) {
-        throw new Error(error.message);
+      if (!error) {
+        return { message: `Verification code sent directly to ${cleanEmail}. Please check your inbox.` };
       }
-      return { message: `Verification code sent directly to ${cleanEmail}. Please check your inbox.` };
+      supabaseErrMsg = error.message;
+      console.warn("Supabase OTP notice:", error.message);
     } catch (err: any) {
+      supabaseErrMsg = err.message;
       console.warn("Supabase OTP failed, attempting backend delivery:", err.message);
     }
   }
 
   // 2. Call backend OTP endpoint (delivers directly via SMTP/Resend)
-  const res = await api.sendOTP(cleanEmail);
-  return {
-    message: res.message,
-  };
+  try {
+    const res = await api.sendOTP(cleanEmail);
+    return {
+      message: res.message,
+    };
+  } catch (backendErr: any) {
+    if (supabaseErrMsg && supabaseErrMsg.toLowerCase().includes("rate limit")) {
+      throw new Error(
+        "Supabase hourly email rate limit reached (free tier limit: 3-4 emails/hr). Please wait a few minutes, or configure Gmail/Resend SMTP in backend."
+      );
+    }
+    throw new Error(
+      backendErr.message || supabaseErrMsg || "Failed to deliver verification code. Please check your email address."
+    );
+  }
 }
 
 export async function verifyEmailOTP(email: string, otp: string): Promise<AuthUser> {

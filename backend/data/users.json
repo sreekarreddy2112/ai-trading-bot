@@ -1,0 +1,42 @@
+{
+  "usr_demo_investor": {
+    "id": "usr_demo_investor",
+    "email": "demo@marketmind.in",
+    "username": "demo_investor",
+    "phone": "9876543210",
+    "name": "Demo Investor",
+    "password_hash": "84214e36a521952fe494ff1c26ff4fd145f42883db01a2f7e4019341f2a7dd54",
+    "salt": "eb5cd080a0e0c34896564126875e51f7",
+    "created_at": "2026-11-04 15:15:34 IST"
+  },
+  "usr_68ddc0e581032d3f": {
+    "id": "usr_68ddc0e581032d3f",
+    "email": "testtrader@marketmind.in",
+    "username": "testtrader99",
+    "phone": "+919876543299",
+    "name": "Testtrader99",
+    "password_hash": "adc135d3133d54d5ad5616598ae5059538cba6f930640454c6aba58f0531f3b4",
+    "salt": "26380cc8c8f8a50db234ce685d521c10",
+    "created_at": "2026-11-04 15:16:12 IST"
+  },
+  "usr_1987be5799aa1a03": {
+    "id": "usr_1987be5799aa1a03",
+    "email": "user_72807222@marketmind.in",
+    "username": "trader_72807222",
+    "phone": "9873529343",
+    "name": "Trader_72807222",
+    "password_hash": "6e92c0ef8f897cd25228696414b367c196d73964db97f34f48b6ba7ef23576f4",
+    "salt": "791f4849a1249f868ab613e652bf8f93",
+    "created_at": "2026-11-04 15:17:41 IST"
+  },
+  "usr_58bb2bfe3494c88c": {
+    "id": "usr_58bb2bfe3494c88c",
+    "email": "user_dfc4472b@marketmind.in",
+    "username": "trader_dfc4472b",
+    "phone": "9875442768",
+    "name": "Trader_dfc4472b",
+    "password_hash": "76898d105ff93c1145abfc3cfef5ece177f1e9631109f1584df81637d339e29d",
+    "salt": "848e8d32f79574f64f54aafc63304b15",
+    "created_at": "2026-11-04 15:22:51 IST"
+  }
+}

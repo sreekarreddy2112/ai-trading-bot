@@ -129,11 +129,11 @@ export default function MarketOverviewPage() {
         <div className="flex items-center gap-2">
           <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0" />
           <span>
-            Authenticated as <strong className="font-bold text-indigo-950">{user.email}</strong> &bull; Personalized watchlists & alerts active
+            Signed in as <strong className="font-bold text-indigo-950">{user.name || user.username || user.email}</strong> &bull; Personalized watchlists, IPO tracking & alerts active
           </span>
         </div>
         <span className="hidden sm:inline-flex px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[11px] font-bold">
-          Email Verified ✓
+          Account Active ✓
         </span>
       </div>
 

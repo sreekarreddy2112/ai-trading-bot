@@ -1,51 +1,67 @@
+import secrets
 import pytest
 from fastapi import HTTPException
 from routers.auth import (
-    send_otp,
-    verify_otp,
-    validate_email_syntax,
+    register_user,
+    login_user,
     generate_auth_token,
-    _otp_store,
+    normalize_phone_digits,
+    _users_db,
 )
-from models.schemas import SendOTPRequest, VerifyOTPRequest
-from config import settings
+from models.schemas import UserRegisterRequest, UserLoginRequest
 
-def test_validate_email_syntax():
-    assert validate_email_syntax("trader@marketmind.in") == "trader@marketmind.in"
-    assert validate_email_syntax("  USER@DOMAIN.COM  ") == "user@domain.com"
-    
-    with pytest.raises(HTTPException):
-        validate_email_syntax("invalid-email")
-        
-    with pytest.raises(HTTPException):
-        validate_email_syntax("@missingusername.com")
+def test_register_and_login_lifecycle():
+    suffix = secrets.token_hex(4)
+    email = f"user_{suffix}@marketmind.in"
+    username = f"trader_{suffix}"
+    phone = f"987{secrets.randbelow(8999999) + 1000000}"
 
-def test_send_and_verify_otp_lifecycle(monkeypatch):
-    _otp_store.clear()
-    email = "investor.test@marketmind.in"
+    # 1. Register new user with Email, Username, Phone, Password
+    reg_req = UserRegisterRequest(
+        email=email,
+        username=username,
+        phone=phone,
+        password="securePassword123"
+    )
+    reg_res = register_user(reg_req)
+    assert reg_res.status == "success"
+    assert reg_res.token
+    assert reg_res.user.email == email
+    assert reg_res.user.username == username
 
-    # Mock send_email_direct to simulate successful email delivery
-    import routers.auth as auth_mod
-    monkeypatch.setattr(auth_mod, "send_email_direct", lambda to_email, code: True)
+    # 2. Login via Email
+    login_email = login_user(UserLoginRequest(
+        identifier=email,
+        password="securePassword123"
+    ))
+    assert login_email.status == "success"
+    assert login_email.user.id == reg_res.user.id
 
-    # 1. Send OTP
-    send_res = send_otp(SendOTPRequest(email=email))
-    assert send_res.status == "sent"
-    assert send_res.email == email
-    
-    # Verify code was stored in server session
-    assert email in _otp_store
-    otp_code = _otp_store[email]["code"]
-    assert len(otp_code) == 6
+    # 3. Login via Username
+    login_user_req = login_user(UserLoginRequest(
+        identifier=username,
+        password="securePassword123"
+    ))
+    assert login_user_req.status == "success"
+    assert login_user_req.user.id == reg_res.user.id
 
-    # 2. Verify with wrong code
-    with pytest.raises(HTTPException) as exc_info:
-        verify_otp(VerifyOTPRequest(email=email, otp="000000"))
-    assert "Invalid verification code" in exc_info.value.detail
+    # 4. Login via Phone Number
+    login_phone_req = login_user(UserLoginRequest(
+        identifier=phone,
+        password="securePassword123"
+    ))
+    assert login_phone_req.status == "success"
+    assert login_phone_req.user.id == reg_res.user.id
 
-    # 3. Verify with correct code
-    verify_res = verify_otp(VerifyOTPRequest(email=email, otp=otp_code))
-    assert verify_res.status == "verified"
-    assert verify_res.user.email == email
-    assert verify_res.user.verified is True
-    assert len(verify_res.token) > 20
+    # 5. Login with Wrong Password
+    with pytest.raises(HTTPException) as exc_wrong_pw:
+        login_user(UserLoginRequest(
+            identifier=username,
+            password="wrongPassword"
+        ))
+    assert exc_wrong_pw.value.status_code == 401
+
+    # 6. Prevent Duplicate Registration
+    with pytest.raises(HTTPException) as exc_dup:
+        register_user(reg_req)
+    assert exc_dup.value.status_code == 400
