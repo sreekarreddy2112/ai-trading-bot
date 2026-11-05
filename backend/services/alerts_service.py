@@ -212,27 +212,27 @@ def create_price_alert(user_id: str, req: CreateAlertRequest) -> AlertItem:
 
 
 def delete_price_alert(user_id: str, alert_id: str) -> bool:
-    """Deletes an alert by ID."""
+    """
+    Deletes an alert by ID.
+    Enforces strict object-level access control: users can ONLY delete alerts that belong to their own account.
+    """
     user_alerts = _alerts_store.get(user_id, [])
     for idx, alert in enumerate(user_alerts):
         if alert["id"] == alert_id:
             user_alerts.pop(idx)
             return True
-    # Also check guest pool
-    guest_alerts = _alerts_store.get("guest", [])
-    for idx, alert in enumerate(guest_alerts):
-        if alert["id"] == alert_id:
-            guest_alerts.pop(idx)
-            return True
     return False
 
 
 def reset_price_alert(user_id: str, alert_id: str) -> bool:
-    """Resets a triggered alert back to ACTIVE."""
-    for pool in [_alerts_store.get(user_id, []), _alerts_store.get("guest", [])]:
-        for alert in pool:
-            if alert["id"] == alert_id:
-                alert["status"] = "ACTIVE"
-                alert["triggered_at"] = None
-                return True
+    """
+    Resets a triggered alert back to ACTIVE.
+    Enforces strict object-level access control: users can ONLY reset alerts that belong to their own account.
+    """
+    user_alerts = _alerts_store.get(user_id, [])
+    for alert in user_alerts:
+        if alert["id"] == alert_id:
+            alert["status"] = "ACTIVE"
+            alert["triggered_at"] = None
+            return True
     return False

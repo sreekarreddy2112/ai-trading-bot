@@ -1,3 +1,4 @@
+import re
 import base64
 import json
 import time
@@ -7,9 +8,12 @@ from fastapi import APIRouter, HTTPException, Header
 from models.schemas import WatchlistItem, WatchlistAddRequest
 from services.market_data import get_stock_data, COMPANY_NAMES, NIFTY_50_METADATA, strip_suffix
 from services.indicators import analyze_dataframe
+from routers.auth import verify_auth_token
 
 router = APIRouter(prefix="/api/watchlist", tags=["Watchlist"])
 logger = logging.getLogger(__name__)
+
+SYMBOL_REGEX = re.compile(r"^[A-Za-z0-9_\-\.\&]{1,20}$")
 
 # In-memory watchlist store (keyed by user_id -> list of symbols)
 # Pre-seeded with top popular stocks for demo exploration
@@ -19,19 +23,17 @@ _watchlist_store: Dict[str, List[str]] = {
 
 
 def get_user_id(authorization: Optional[str] = Header(None)) -> str:
-    """Extracts user UUID from Supabase JWT token or defaults to 'guest'."""
+    """
+    Extracts and cryptographically validates user UUID from HMAC-signed JWT token,
+    or falls back to 'guest' for unauthenticated public preview.
+    Prevents token spoofing, forged signatures, and BOLA/IDOR vulnerabilities.
+    """
     if authorization and authorization.startswith("Bearer "):
         token = authorization.split(" ")[1]
-        try:
-            parts = token.split(".")
-            if len(parts) >= 2:
-                payload_b64 = parts[1] + "=" * (-len(parts[1]) % 4)
-                payload_json = json.loads(base64.urlsafe_b64decode(payload_b64.encode()))
-                if "sub" in payload_json:
-                    return str(payload_json["sub"])
-        except Exception as e:
-            logger.debug(f"Could not parse JWT sub: {e}")
-        return token[:16]
+        payload = verify_auth_token(token)
+        if payload and "sub" in payload:
+            return str(payload["sub"])
+        logger.warning("Unverified or forged bearer token presented to watchlist API")
     return "guest"
 
 
@@ -165,6 +167,8 @@ def add_to_watchlist(req: WatchlistAddRequest, authorization: Optional[str] = He
     """
     user_id = get_user_id(authorization)
     clean_sym = strip_suffix(req.symbol.strip().upper())
+    if not SYMBOL_REGEX.match(clean_sym):
+        raise HTTPException(status_code=400, detail="Invalid stock symbol format.")
 
     user_symbols = _watchlist_store.setdefault(user_id, [])
     if clean_sym not in user_symbols:

@@ -1,6 +1,7 @@
+import re
 import logging
 from typing import Optional
-from fastapi import APIRouter, HTTPException, Header
+from fastapi import APIRouter, HTTPException, Header, Path as FastApiPath
 from models.schemas import CreateAlertRequest, AlertItem, AlertListResponse
 from services.alerts_service import (
     get_user_alerts,
@@ -12,6 +13,8 @@ from routers.watchlist import get_user_id
 
 router = APIRouter(prefix="/api/alerts", tags=["Price Alerts"])
 logger = logging.getLogger(__name__)
+
+ALERT_ID_PARAM = FastApiPath(..., pattern=r"^[A-Za-z0-9_\-]{5,50}$", description="Unique Alert Identifier")
 
 
 @router.get("", response_model=AlertListResponse)
@@ -43,15 +46,16 @@ def create_alert(req: CreateAlertRequest, authorization: Optional[str] = Header(
 
 
 @router.delete("/{alert_id}")
-def delete_alert(alert_id: str, authorization: Optional[str] = Header(None)):
+def delete_alert(alert_id: str = ALERT_ID_PARAM, authorization: Optional[str] = Header(None)):
     """
     Deletes an existing price alert by ID.
+    Enforces authorization check ensuring only the owning user can delete their alert.
     """
     try:
         user_id = get_user_id(authorization)
         success = delete_price_alert(user_id, alert_id)
         if not success:
-            raise HTTPException(status_code=404, detail="Alert not found")
+            raise HTTPException(status_code=404, detail="Alert not found or unauthorized")
         return {"status": "success", "message": "Alert deleted successfully"}
     except HTTPException:
         raise
@@ -61,15 +65,16 @@ def delete_alert(alert_id: str, authorization: Optional[str] = Header(None)):
 
 
 @router.post("/{alert_id}/reset")
-def reset_alert(alert_id: str, authorization: Optional[str] = Header(None)):
+def reset_alert(alert_id: str = ALERT_ID_PARAM, authorization: Optional[str] = Header(None)):
     """
     Resets a triggered alert back to ACTIVE status.
+    Enforces authorization check ensuring only the owning user can reset their alert.
     """
     try:
         user_id = get_user_id(authorization)
         success = reset_price_alert(user_id, alert_id)
         if not success:
-            raise HTTPException(status_code=404, detail="Alert not found")
+            raise HTTPException(status_code=404, detail="Alert not found or unauthorized")
         return {"status": "success", "message": "Alert reset to ACTIVE"}
     except HTTPException:
         raise

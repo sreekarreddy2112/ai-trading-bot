@@ -1,5 +1,6 @@
 import logging
-from fastapi import APIRouter, HTTPException, Query, Request
+import re
+from fastapi import APIRouter, HTTPException, Query, Request, Path as FastApiPath
 from models.schemas import StockDetailResponse, StockIndicatorsResponse, AIAnalysisResponse
 from services.market_data import get_stock_data
 from services.indicators import analyze_dataframe
@@ -9,9 +10,12 @@ from services.news_sentiment import fetch_rss_headlines
 router = APIRouter(prefix="/api/stocks", tags=["Stocks"])
 logger = logging.getLogger(__name__)
 
+SYMBOL_PARAM = FastApiPath(..., pattern=r"^[A-Za-z0-9_\-\.\&]{1,20}$", description="NSE/BSE Equity Ticker Symbol")
+PERIOD_PARAM = Query("1y", pattern=r"^(1mo|3mo|6mo|1y|2y|5y)$", description="Historical lookback period")
+
 
 @router.get("/{symbol}", response_model=StockDetailResponse)
-def get_stock_details(symbol: str, period: str = Query("1y", pattern="^(1mo|3mo|6mo|1y|2y|5y)$")):
+def get_stock_details(symbol: str = SYMBOL_PARAM, period: str = PERIOD_PARAM):
     """
     Returns company info, fundamentals (PE, market cap, 52-week high/low),
     and historical OHLCV candle data.
@@ -25,7 +29,7 @@ def get_stock_details(symbol: str, period: str = Query("1y", pattern="^(1mo|3mo|
 
 
 @router.get("/{symbol}/indicators", response_model=StockIndicatorsResponse)
-def get_stock_indicators(symbol: str, period: str = Query("1y")):
+def get_stock_indicators(symbol: str = SYMBOL_PARAM, period: str = PERIOD_PARAM):
     """
     Computes technical metrics:
     - RSI(14)
@@ -49,7 +53,7 @@ def get_stock_indicators(symbol: str, period: str = Query("1y")):
 
 
 @router.post("/{symbol}/ai-analysis", response_model=AIAnalysisResponse)
-async def generate_ai_analysis(symbol: str, request: Request):
+async def generate_ai_analysis(request: Request, symbol: str = SYMBOL_PARAM):
     """
     Generates structured AI analysis using Claude API (or deterministic fallback).
     Enforces Pydantic schema validation, 30-min cache, and hourly rate limits.

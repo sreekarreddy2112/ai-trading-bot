@@ -1,21 +1,14 @@
 import { createClient } from "@supabase/supabase-js";
 import { api } from "./api";
 
-const FALLBACK_SUPABASE_URL = "https://unkrcdpscnzwlwpridjt.supabase.co";
-const FALLBACK_SUPABASE_ANON_KEY = "sb_publishable_wieVUbLjOy02kgQwxSEMsw_Lg9toMIr";
-
-const rawUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || FALLBACK_SUPABASE_URL;
-const rawKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || FALLBACK_SUPABASE_ANON_KEY;
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "https://placeholder.supabase.co";
+const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "placeholder-anon-key";
 
 export const isSupabaseConfigured = Boolean(
-  rawUrl &&
-  rawKey &&
-  !rawUrl.includes("placeholder") &&
-  !rawKey.includes("placeholder")
+  process.env.NEXT_PUBLIC_SUPABASE_URL &&
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY &&
+  !process.env.NEXT_PUBLIC_SUPABASE_URL.includes("placeholder")
 );
-
-const supabaseUrl = rawUrl;
-const supabaseAnonKey = rawKey;
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   auth: {

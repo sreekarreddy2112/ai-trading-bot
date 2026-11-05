@@ -43,6 +43,13 @@ yarn-error.log*
 .env.*.local
 *.env
 
+# User Data & Storage (CRITICAL - DO NOT COMMIT SENSITIVE USER PII)
+backend/data/*.json
+backend/data/
+data/users.json
+*.db
+*.sqlite3
+
 # IDE / Editor
 .vscode/
 .idea/

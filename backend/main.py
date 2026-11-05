@@ -1,3 +1,4 @@
+import os
 import sys
 from pathlib import Path
 
@@ -7,7 +8,7 @@ if str(backend_dir) not in sys.path:
     sys.path.insert(0, str(backend_dir))
 
 import logging
-from fastapi import FastAPI, Response
+from fastapi import FastAPI, Response, Request
 from fastapi.middleware.cors import CORSMiddleware
 from config import settings
 from routers import market, stocks, news, backtest, watchlist, ipo, alerts, auth
@@ -19,26 +20,35 @@ logging.basicConfig(
 )
 logger = logging.getLogger("MarketMind")
 
+# Security: In production, internal Swagger (/docs) and ReDoc (/redoc) are disabled
+is_production = (
+    os.getenv("ENVIRONMENT", "development").lower() == "production"
+    or os.getenv("RENDER", "").lower() == "true"
+    or os.getenv("VERCEL_ENV", "").lower() == "production"
+)
+
 app = FastAPI(
     title=settings.PROJECT_NAME,
     version=settings.VERSION,
     description=settings.DESCRIPTION,
-    docs_url="/docs",
-    redoc_url="/redoc"
+    docs_url=None if is_production else "/docs",
+    redoc_url=None if is_production else "/redoc",
+    openapi_url=None if is_production else "/openapi.json",
 )
 
-# CORS configuration - Allow Vercel, localhost, and configured origins
-cors_origins = list(settings.ALLOWED_ORIGINS)
-if "*" not in cors_origins:
-    cors_origins.append("*")
+# Secure CORS configuration: explicit origins + regex for trusted deployments, no wildcard with credentials
+cors_origins = [o for o in settings.ALLOWED_ORIGINS if o and o != "*"]
+for default_origin in ["http://localhost:3000", "http://127.0.0.1:3000", "http://localhost:3001"]:
+    if default_origin not in cors_origins:
+        cors_origins.append(default_origin)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_origin_regex=r"^https://.*\.vercel\.app$|^http://localhost:\d+$|^http://127\.0\.0\.1:\d+$",
+    allow_origins=cors_origins,
+    allow_origin_regex=r"^https://[a-zA-Z0-9\-_]+\.vercel\.app$|^http://(localhost|127\.0\.0\.1):\d+$",
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Content-Type", "Authorization", "X-Requested-With", "Accept"],
 )
 
 # Include routers

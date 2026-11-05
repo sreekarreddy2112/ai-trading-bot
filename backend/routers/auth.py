@@ -1,3 +1,4 @@
+import hmac
 import re
 import os
 import time
@@ -7,7 +8,7 @@ import secrets
 import hashlib
 import logging
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List, Tuple
 from fastapi import APIRouter, HTTPException, status, Header
 from models.schemas import (
     UserRegisterRequest,
@@ -28,23 +29,17 @@ EMAIL_REGEX = re.compile(r"^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$")
 PHONE_REGEX = re.compile(r"^\+?[0-9]{7,15}$")
 USERNAME_REGEX = re.compile(r"^[a-zA-Z0-9_.-]{3,30}$")
 
+# Cryptographic Token Secret (Loaded from environment or initialized per deployment)
+JWT_SECRET_KEY: str = (
+    os.getenv("JWT_SECRET_KEY")
+    or os.getenv("SECRET_KEY")
+    or os.getenv("SUPABASE_SERVICE_KEY")
+    or "marketmind_secure_auth_secret_key_2026_prod"
+).strip()
+
 # Persistent User Storage (file-backed JSON)
 USERS_FILE = Path(__file__).resolve().parent.parent / "data" / "users.json"
 _users_db: Dict[str, Dict[str, Any]] = {}
-
-
-def hash_password(password: str, salt: Optional[str] = None) -> tuple[str, str]:
-    """Generates PBKDF2 HMAC SHA-256 hash with cryptographic salt."""
-    if not salt:
-        salt = secrets.token_hex(16)
-    key = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), 100000)
-    return key.hex(), salt
-
-
-def verify_password(password: str, hashed: str, salt: str) -> bool:
-    """Verifies a password against its PBKDF2 hash using constant-time comparison."""
-    key = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), 100000)
-    return secrets.compare_digest(key.hex(), hashed)
 
 
 def load_users():
@@ -90,9 +85,67 @@ def save_users():
 # Initialize storage on startup
 load_users()
 
+# Security: In-memory Brute-Force Rate Limiting (5 failed attempts per 15 min lockout)
+_failed_login_attempts: Dict[str, List[float]] = {}
+MAX_FAILED_LOGIN_ATTEMPTS = 5
+LOCKOUT_WINDOW_SECONDS = 900  # 15 minutes
+
+
+def check_login_rate_limit(identifier: str) -> Tuple[bool, int]:
+    """
+    Checks whether an identifier/IP is currently locked out due to brute-force attempts.
+    Returns (is_allowed, remaining_cooldown_seconds).
+    """
+    now = time.time()
+    clean_id = identifier.strip().lower()
+    recent = [t for t in _failed_login_attempts.get(clean_id, []) if now - t < LOCKOUT_WINDOW_SECONDS]
+    _failed_login_attempts[clean_id] = recent
+
+    if len(recent) >= MAX_FAILED_LOGIN_ATTEMPTS:
+        oldest_relevant = min(recent)
+        cooldown_remaining = int(LOCKOUT_WINDOW_SECONDS - (now - oldest_relevant))
+        return False, max(1, cooldown_remaining)
+    return True, 0
+
+
+def record_failed_login(identifier: str):
+    """Logs a failed attempt against the identifier."""
+    now = time.time()
+    clean_id = identifier.strip().lower()
+    recent = [t for t in _failed_login_attempts.get(clean_id, []) if now - t < LOCKOUT_WINDOW_SECONDS]
+    recent.append(now)
+    _failed_login_attempts[clean_id] = recent
+
+
+def clear_failed_login(identifier: str):
+    """Clears failed attempts upon successful password verification."""
+    clean_id = identifier.strip().lower()
+    _failed_login_attempts.pop(clean_id, None)
+
+
+def hash_password(password: str, salt: Optional[str] = None) -> tuple[str, str]:
+    """Generates PBKDF2 HMAC SHA-256 hash with cryptographic salt (100,000 rounds)."""
+    if not salt:
+        salt = secrets.token_hex(16)
+    key = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), 100000)
+    return key.hex(), salt
+
+
+def verify_password(password: str, hashed: str, salt: str) -> bool:
+    """Verifies a password against its PBKDF2 hash using constant-time comparison."""
+    key = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), 100000)
+    return secrets.compare_digest(key.hex(), hashed)
+
+
+def sign_token_payload(header_b64: str, payload_b64: str) -> str:
+    """Computes HMAC-SHA256 signature for JWT token."""
+    message = f"{header_b64}.{payload_b64}".encode("utf-8")
+    digest = hmac.new(JWT_SECRET_KEY.encode("utf-8"), message, hashlib.sha256).digest()
+    return base64.urlsafe_b64encode(digest).decode("utf-8").rstrip("=")
+
 
 def generate_auth_token(user_id: str, email: str) -> str:
-    """Generates an RFC-compliant base64 JWT payload token accepted by get_user_id()."""
+    """Generates a cryptographically signed HMAC-SHA256 JWT token."""
     header = {"alg": "HS256", "typ": "JWT"}
     payload = {
         "sub": user_id,
@@ -104,8 +157,41 @@ def generate_auth_token(user_id: str, email: str) -> str:
     }
     h_b64 = base64.urlsafe_b64encode(json.dumps(header).encode()).decode().rstrip("=")
     p_b64 = base64.urlsafe_b64encode(json.dumps(payload).encode()).decode().rstrip("=")
-    sig = base64.urlsafe_b64encode(f"sig_{user_id}_{int(time.time())}".encode()).decode().rstrip("=")
+    sig = sign_token_payload(h_b64, p_b64)
     return f"{h_b64}.{p_b64}.{sig}"
+
+
+def verify_auth_token(token: str) -> Optional[Dict[str, Any]]:
+    """
+    Cryptographically verifies the HMAC-SHA256 signature of a JWT token
+    and checks expiration. Returns the payload dictionary if valid, or None.
+    """
+    if not token:
+        return None
+    token = token.strip()
+    parts = token.split(".")
+    if len(parts) != 3:
+        return None
+
+    h_b64, p_b64, sig = parts
+    expected_sig = sign_token_payload(h_b64, p_b64)
+
+    # Constant-time signature comparison to eliminate timing attacks
+    if not secrets.compare_digest(sig, expected_sig):
+        logger.warning("Rejected token with invalid or forged HMAC signature")
+        return None
+
+    try:
+        p_padded = p_b64 + "=" * (-len(p_b64) % 4)
+        payload = json.loads(base64.urlsafe_b64decode(p_padded.encode("utf-8")))
+        # Check token expiration
+        if payload.get("exp", 0) < time.time():
+            logger.info("Rejected expired token")
+            return None
+        return payload
+    except Exception as e:
+        logger.warning(f"Error parsing token payload: {e}")
+        return None
 
 
 def normalize_phone(phone: str) -> str:
@@ -172,12 +258,18 @@ def register_user(req: UserRegisterRequest):
             detail="Please provide a valid phone number with 7 to 15 digits (e.g. 9876543210 or +919876543210).",
         )
 
-    # 4. Validate Password
+    # 4. Validate Password Complexity
     clean_password = req.password.strip()
     if len(clean_password) < 6:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Password must be at least 6 characters in length.",
+        )
+    COMMON_WEAK_PASSWORDS = {"123456", "password", "12345678", "qwerty", "123456789", "admin123"}
+    if clean_password.lower() in COMMON_WEAK_PASSWORDS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="This password is too common and vulnerable to automated dictionary attacks. Please choose a more secure password.",
         )
 
     # 5. Check Uniqueness
@@ -253,20 +345,34 @@ def login_user(req: UserLoginRequest):
             detail="Please enter your password.",
         )
 
+    # Rate Limiting check against automated brute-force attacks
+    allowed, cooldown = check_login_rate_limit(raw_identifier)
+    if not allowed:
+        logger.warning(f"Brute-force login attempt blocked for identifier: {raw_identifier}")
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Too many failed login attempts. Account temporarily locked for {cooldown} seconds to prevent brute-force attacks.",
+        )
+
     # Find by email, username, or phone
     user_record = find_user_by_identifier(raw_identifier)
     if not user_record:
+        record_failed_login(raw_identifier)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid credentials. No account found matching that email, username, or phone number.",
+            detail="Invalid credentials. Please verify your details and try again.",
         )
 
-    # Verify Password
+    # Verify Password with constant-time cryptographic comparison
     if not verify_password(raw_password, user_record["password_hash"], user_record["salt"]):
+        record_failed_login(raw_identifier)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect password. Please verify and try again.",
+            detail="Invalid credentials. Please verify your details and try again.",
         )
+
+    # Authentication successful: clear failed attempt tracker
+    clear_failed_login(raw_identifier)
 
     token = generate_auth_token(user_record["id"], user_record["email"])
     logger.info(f"User signed in successfully: {user_record['username']} ({user_record['email']})")
@@ -289,30 +395,30 @@ def login_user(req: UserLoginRequest):
 
 @router.get("/me", response_model=UserProfileResponse)
 def get_current_user_profile(authorization: Optional[str] = Header(None)):
-    """Retrieves profile of the currently signed-in user."""
+    """Retrieves profile of the currently signed-in user with cryptographic token verification."""
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
 
     token = authorization.split(" ")[1]
-    try:
-        parts = token.split(".")
-        if len(parts) >= 2:
-            payload_b64 = parts[1] + "=" * (-len(parts[1]) % 4)
-            payload_json = json.loads(base64.urlsafe_b64decode(payload_b64.encode()))
-            user_id = str(payload_json.get("sub", ""))
-            if user_id in _users_db:
-                u = _users_db[user_id]
-                return UserProfileResponse(
-                    id=u["id"],
-                    email=u["email"],
-                    username=u["username"],
-                    phone=u["phone"],
-                    name=u["name"],
-                )
-    except Exception as e:
-        logger.debug(f"Auth token decode error: {e}")
+    payload = verify_auth_token(token)
+    if not payload:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid, expired, or forged authentication token."
+        )
 
-    raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Session expired or invalid")
+    user_id = str(payload.get("sub", ""))
+    if user_id in _users_db:
+        u = _users_db[user_id]
+        return UserProfileResponse(
+            id=u["id"],
+            email=u["email"],
+            username=u["username"],
+            phone=u["phone"],
+            name=u["name"],
+        )
+
+    raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User session not found or revoked")
 
 
 # ----------------- 4. BACKWARD COMPATIBILITY (LEGACY OTP STUBS) -----------------
