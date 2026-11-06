@@ -42,8 +42,32 @@ USERS_FILE = Path(__file__).resolve().parent.parent / "data" / "users.json"
 _users_db: Dict[str, Dict[str, Any]] = {}
 
 
+def hash_password(password: str, salt: Optional[str] = None) -> tuple[str, str]:
+    """Generates PBKDF2 HMAC SHA-256 hash with cryptographic salt (100,000 rounds)."""
+    if not salt:
+        salt = secrets.token_hex(16)
+    key = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), 100000)
+    return key.hex(), salt
+
+
+def verify_password(password: str, hashed: str, salt: str) -> bool:
+    """Verifies a password against its PBKDF2 hash using constant-time comparison."""
+    key = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), 100000)
+    return secrets.compare_digest(key.hex(), hashed)
+
+
+def save_users():
+    """Persists user dictionary to JSON file."""
+    try:
+        USERS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with open(USERS_FILE, "w", encoding="utf-8") as f:
+            json.dump(_users_db, f, indent=2)
+    except Exception as e:
+        logger.error(f"Failed to persist users to file: {e}")
+
+
 def load_users():
-    """Loads stored users from data/users.json."""
+    """Loads stored users from data/users.json or seeds default user if file is absent."""
     global _users_db
     try:
         USERS_FILE.parent.mkdir(parents=True, exist_ok=True)
@@ -70,16 +94,6 @@ def load_users():
             "created_at": time.strftime("%Y-%m-%d %H:%M:%S IST"),
         }
         save_users()
-
-
-def save_users():
-    """Persists user dictionary to JSON file."""
-    try:
-        USERS_FILE.parent.mkdir(parents=True, exist_ok=True)
-        with open(USERS_FILE, "w", encoding="utf-8") as f:
-            json.dump(_users_db, f, indent=2)
-    except Exception as e:
-        logger.error(f"Failed to persist users to file: {e}")
 
 
 # Initialize storage on startup
@@ -121,20 +135,6 @@ def clear_failed_login(identifier: str):
     """Clears failed attempts upon successful password verification."""
     clean_id = identifier.strip().lower()
     _failed_login_attempts.pop(clean_id, None)
-
-
-def hash_password(password: str, salt: Optional[str] = None) -> tuple[str, str]:
-    """Generates PBKDF2 HMAC SHA-256 hash with cryptographic salt (100,000 rounds)."""
-    if not salt:
-        salt = secrets.token_hex(16)
-    key = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), 100000)
-    return key.hex(), salt
-
-
-def verify_password(password: str, hashed: str, salt: str) -> bool:
-    """Verifies a password against its PBKDF2 hash using constant-time comparison."""
-    key = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), 100000)
-    return secrets.compare_digest(key.hex(), hashed)
 
 
 def sign_token_payload(header_b64: str, payload_b64: str) -> str:
